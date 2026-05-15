@@ -25,139 +25,114 @@ export default function CategoryJumpMenu() {
   const params = useParams();
   const router = useRouter();
   
-  // Safely decode the category name from the URL
-  const categoryName = params.categoryName 
+  const categoryName = params?.categoryName 
     ? decodeURIComponent(params.categoryName as string) 
     : '';
 
   const [phases, setPhases] = useState<MinorPhase[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    // 1. Get steps from cache
     const cachedStepsText = localStorage.getItem('hajj_all_steps');
     if (!cachedStepsText) {
       router.push('/dashboard');
       return;
     }
 
-    const allSteps: Step[] = JSON.parse(cachedStepsText);
+    try {
+      const allSteps: Step[] = JSON.parse(cachedStepsText);
+      const categorySteps = allSteps.filter(s => s.major_category === categoryName);
 
-    // 2. Filter for this specific major category
-    const categorySteps = allSteps.filter(s => s.major_category === categoryName);
-
-    // 3. Group by Minor Category and find the starting ID for each
-    const groupedPhases: Record<string, MinorPhase> = {};
-    
-    categorySteps.forEach(step => {
-      if (!groupedPhases[step.minor_category]) {
-        groupedPhases[step.minor_category] = {
-          title: step.minor_category,
-          firstStepId: step.id,
-          colorTheme: step.color_theme,
-          stepCount: 1
-        };
-      } else {
-        groupedPhases[step.minor_category].stepCount += 1;
-        // Ensure we keep the absolute lowest ID as the starting point
-        if (step.id < groupedPhases[step.minor_category].firstStepId) {
-          groupedPhases[step.minor_category].firstStepId = step.id;
+      const groupedPhases: Record<string, MinorPhase> = {};
+      
+      categorySteps.forEach(step => {
+        if (!groupedPhases[step.minor_category]) {
+          groupedPhases[step.minor_category] = {
+            title: step.minor_category,
+            firstStepId: step.id,
+            colorTheme: step.color_theme,
+            stepCount: 1
+          };
+        } else {
+          groupedPhases[step.minor_category].stepCount++;
         }
-      }
-    });
+      });
 
-    // Convert the object to an array and sort by starting ID to maintain chronological order
-    const phasesArray = Object.values(groupedPhases).sort((a, b) => a.firstStepId - b.firstStepId);
-    
-    setPhases(phasesArray);
-    setLoading(false);
+      setPhases(Object.values(groupedPhases));
+    } catch (e) {
+      console.error("Cache parsing error", e);
+    } finally {
+      setLoading(false);
+    }
   }, [categoryName, router]);
 
-  // --- Handlers ---
-  const handleJumpToPhase = async (firstStepId: number) => {
-    setUpdating(true);
+  const handleJumpToPhase = (stepId: number) => {
     const profileId = localStorage.getItem('hajj_active_profile');
     
     if (profileId) {
-      // 1. Update the database so the rest of the group sees where you jumped
-      await supabase
-        .from('profiles')
-        .update({ current_step_id: firstStepId })
-        .eq('id', profileId);
+        const cachedProfileData = localStorage.getItem(`hajj_profile_cache_${profileId}`);
+        if (cachedProfileData) {
+            const updatedProfile = { ...JSON.parse(cachedProfileData), current_step_id: stepId };
+            localStorage.setItem(`hajj_profile_cache_${profileId}`, JSON.stringify(updatedProfile));
+            // Let the app know we just manually shifted gears so it doesn't overwrite it immediately
+            localStorage.setItem('hajj_profile_last_modified', Date.now().toString());
+        }
         
-      // 2. Go to the engine
-      router.push('/engine');
+        const syncJump = async () => {
+            try {
+                await supabase.from('profiles').update({ current_step_id: stepId }).eq('id', profileId);
+            } catch (e) {}
+        };
+        syncJump();
     }
+    
+    // THE FIX: Passing the step ID and a timestamp forces Next.js to ignore the router cache and load fresh!
+    router.push(`/engine?jump=${stepId}&t=${Date.now()}`);
   };
 
-  // --- UI Helpers ---
-  // Guaranteed high-contrast text with soft backgrounds
   const getThemeClasses = (theme: string) => {
     const themes: Record<string, { bg: string, border: string, titleText: string, accentText: string }> = {
-      'sand':  { bg: 'bg-amber-50/70',    border: 'border-amber-200',   titleText: 'text-slate-800', accentText: 'text-amber-700' },
-      'sage':  { bg: 'bg-emerald-50/70',  border: 'border-emerald-200', titleText: 'text-slate-800', accentText: 'text-emerald-700' },
-      'sky':   { bg: 'bg-sky-50/70',      border: 'border-sky-200',     titleText: 'text-slate-800', accentText: 'text-sky-700' },
-      'slate': { bg: 'bg-slate-50/70',    border: 'border-slate-200',   titleText: 'text-slate-800', accentText: 'text-slate-600' },
+      'sand':  { bg: 'bg-[#FCFBF8]', border: 'border-amber-100', titleText: 'text-amber-900', accentText: 'text-amber-500' },
+      'sage':  { bg: 'bg-[#F7FBF9]', border: 'border-emerald-100', titleText: 'text-emerald-900', accentText: 'text-emerald-500' },
+      'sky':   { bg: 'bg-[#F7FAFD]', border: 'border-sky-100', titleText: 'text-sky-900', accentText: 'text-sky-500' },
+      'slate': { bg: 'bg-[#F8F9FA]', border: 'border-slate-100', titleText: 'text-slate-900', accentText: 'text-slate-500' },
     };
     return themes[theme] || themes['slate'];
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center text-slate-400 tracking-widest text-sm uppercase">Loading Phases...</div>;
+    return (
+      <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] p-6 pb-24 font-sans relative">
-      
-      {/* Loading Overlay when jumping */}
-      {updating && (
-        <div className="absolute inset-0 z-50 bg-[#FAFAFA]/80 backdrop-blur-sm flex items-center justify-center">
-          <div className="text-slate-800 font-medium animate-pulse tracking-widest uppercase text-sm">Syncing Journey...</div>
+    <div className="min-h-screen bg-[#FAFAFA] p-6 pb-24 font-sans flex flex-col">
+      <div className="flex justify-between items-start mb-8 mt-4">
+        <button onClick={() => router.push('/dashboard')} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400 active:scale-90 transition-transform">
+          ←
+        </button>
+        <div className="text-right">
+          <p className="text-[10px] text-slate-400 uppercase tracking-widest font-medium">Phase Details</p>
+          <h1 className="text-xl font-medium text-slate-800">{categoryName}</h1>
         </div>
-      )}
+      </div>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto">
-        
-        {/* Navigation Bar */}
-        <div className="flex items-center gap-4 mb-10 mt-4">
-          <button 
-            onClick={() => router.push('/dashboard')}
-            className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            ←
-          </button>
-          <div>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-medium">Jump-In Menu</p>
-            <h1 className="text-xl font-medium text-slate-800 leading-tight">{categoryName}</h1>
-          </div>
-        </div>
-
-        {/* Timeline Layout */}
-        <div className="relative pl-4 border-l-2 border-slate-200 ml-4 space-y-6">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 max-w-md mx-auto w-full pl-4 border-l-2 border-slate-100/60 mt-4 relative">
+        <div className="flex flex-col gap-8">
           {phases.map((phase, index) => {
             const theme = getThemeClasses(phase.colorTheme);
-            
             return (
-              <motion.div
-                key={phase.title}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="relative"
-              >
-                {/* Timeline Dot matching the theme */}
+              <motion.div key={phase.title} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.1 }} className="relative">
                 <div className={`absolute -left-[23px] top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full ${theme.bg} border-2 ${theme.border} ring-4 ring-[#FAFAFA]`} />
-                
-                {/* Clickable Card */}
                 <button
                   onClick={() => handleJumpToPhase(phase.firstStepId)}
                   className={`w-full text-left p-6 rounded-[2rem] border shadow-sm transition-all active:scale-95 hover:shadow-md ${theme.bg} ${theme.border}`}
                 >
                   <div className="flex justify-between items-center mb-1.5">
-                    <h3 className={`text-xl font-medium tracking-tight ${theme.titleText}`}>
-                      {phase.title}
-                    </h3>
+                    <h3 className={`text-xl font-medium tracking-tight ${theme.titleText}`}>{phase.title}</h3>
                     <span className={`text-xl font-light opacity-50 ${theme.titleText}`}>→</span>
                   </div>
                   <p className={`text-xs uppercase tracking-widest font-semibold ${theme.accentText}`}>
@@ -168,7 +143,6 @@ export default function CategoryJumpMenu() {
             );
           })}
         </div>
-
       </motion.div>
     </div>
   );
