@@ -22,6 +22,7 @@ function mapTidToSupabaseId(tid: "ZH" | "DZ" | "SA" | "MA" | "IZ" | "HT" | "AT")
 export async function POST(req: Request) {
     try {
         const data = await req.json();
+        console.log('received request: ', data)
 
         if (data._type === 'location') {
             const { lat, lon, tid, tst } = data;
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
         }
 
         // Next.js standard way to return a JSON response
+        console.log('returning response')
         return NextResponse.json([]);
 
     } catch (error) {
